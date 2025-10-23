@@ -73,7 +73,7 @@ void setup() {
     FastLED.clear();
     FastLED.show();
 
-    PingPong.init(PING_PONG_TIMEOUT_MS, &Serial); 
+    PingPong.init(PING_PONG_TIMEOUT_MS, &Serial);
     Serial.println("ESP Ready: ARM + MIC STAR (FastLED + CmdLib active)");
 }
 
@@ -230,6 +230,8 @@ void parseCommand(String line) {
         fill_solid(topArm, NUM_TOP_ARM, CRGB::Black);
         fill_solid(bottomArm, NUM_BOTTOM_ARM, CRGB::Black);
         FastLED.show();
+
+        sendRequest("STAR_ARRIVED");
     } else {
         Serial.print("!!ERROR{message=Unknown command: ");
         Serial.print(parsedCmd.command);
@@ -294,6 +296,7 @@ void handleIdleAnimation() {
         fill_solid(bottomArm, NUM_BOTTOM_ARM, CRGB::Black);
         FastLED.show();
 
+        sendRequest("STAR_ARRIVED");
         lastIdleAnimationTimestamp = now;
 
         Serial.print("Animation took:");
