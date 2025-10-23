@@ -32,6 +32,7 @@ CRGB micStar[NUM_MIC_STAR];
 #define TX_PIN 17
 
 #define IDLE_ANIMATION_INTERVAL 10000  // 10 seconds for testing, can be adjusted
+#define PING_PONG_TIMEOUT_MS 45000
 
 // =============================================================
 // VARIABELEN
@@ -72,7 +73,7 @@ void setup() {
     FastLED.clear();
     FastLED.show();
 
-    PingPong.init(30000, &Serial);  // 45s timeout
+    PingPong.init(PING_PONG_TIMEOUT_MS, &Serial); 
     Serial.println("ESP Ready: ARM + MIC STAR (FastLED + CmdLib active)");
 }
 
@@ -220,6 +221,8 @@ void parseCommand(String line) {
             FastLED.show();
             delay(delayPerStep);
             yield();
+
+            sendConfirm("SEND_STAR");
         }
 
         // ARM strips resetten
@@ -307,6 +310,13 @@ void sendConfirm(const char* cmdName) {
     confirm.msgKind = "MASTER:CONFIRM";
     confirm.command = String(cmdName);
     Serial.println(confirm.toString());
+}
+
+void sendRequest(const char* cmdName) {
+    cmdlib::Command request;
+    request.msgKind = "MASTER:REQUEST";
+    request.command = String(cmdName);
+    Serial.println(request.toString());
 }
 
 // =============================================================
