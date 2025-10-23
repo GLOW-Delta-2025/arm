@@ -31,6 +31,8 @@ CRGB micStar[NUM_MIC_STAR];
 #define RX_PIN 16
 #define TX_PIN 17
 
+#define IDLE_ANIMATION_INTERVAL 10000  // 10 seconds for testing, can be adjusted
+
 // =============================================================
 // VARIABELEN
 // =============================================================
@@ -44,11 +46,14 @@ String serialLine;
 
 void readSerial(void);
 void parseCommand(String line);
+void handleIdleAnimation(void);
 
 PingPongHandler PingPong;
-bool PING_IDLE = true;
+bool PING_IDLE = false;
 
 bool starIsMade = false;
+
+unsigned long lastIdleAnimationTimestamp = 0;
 
 // =============================================================
 // SETUP
@@ -62,38 +67,38 @@ void setup() {
     FastLED.addLeds<WS2811, PIN_SIDE_ARM, RGB>(sideArm, NUM_SIDE_ARM);
     FastLED.addLeds<WS2811, PIN_TOP_ARM, RGB>(topArm, NUM_TOP_ARM);
     FastLED.addLeds<WS2811, PIN_BOTTOM_ARM, RGB>(bottomArm, NUM_BOTTOM_ARM);
-    FastLED.addLeds<WS2811, PIN_MIC_STAR, BGR>(micStar, NUM_MIC_STAR);
+    FastLED.addLeds<WS2811, PIN_MIC_STAR, BRG>(micStar, NUM_MIC_STAR);
 
     FastLED.clear();
     FastLED.show();
 
-    PingPong.init(45000, &Serial2);  // 45s timeout
-    Serial2.println("ESP Ready: ARM + MIC STAR (FastLED + CmdLib active)");
+    PingPong.init(30000, &Serial);  // 45s timeout
+    Serial.println("ESP Ready: ARM + MIC STAR (FastLED + CmdLib active)");
 }
 
 // =============================================================
 // MAIN LOOP
 // =============================================================
 void loop() {
+    PingPong.update();  // handle PING/PONG idle detection
     readSerial();
-    // PingPong.update();  // handle PING/PONG idle detection
 
-    // if (PING_IDLE) {  // optional reaction if idle
-    //   Serial.println("!!WARN{message=CONNECTION_IDLE}##");
-    // }
+    if (PING_IDLE) {  // optional reaction if idle
+        Serial.println("!!ERROR{message=CONNECTION_IDLE}##");
+        handleIdleAnimation();
+    }
 }
 
 // =============================================================
 // SERIAL PARSER
 // =============================================================
 void readSerial() {
-    while (Serial2.available()) {
-        char c = Serial2.read();
+    while (Serial.available()) {
+        char c = Serial.read();
         serialLine += c;
-        Serial.println(serialLine);  // echo naar hoofdserial
         if (serialLine.endsWith("##")) {
-            PingPong.processRawCommand(serialLine);
             parseCommand(serialLine);
+            // Serial.println(serialLine);  // echo naar hoofdserial
             serialLine = "";
         }
     }
@@ -103,32 +108,67 @@ void parseCommand(String line) {
     String err;
     cmdlib::Command parsedCmd;
 
-    if (!cmdlib::parse(line.c_str(), parsedCmd, err)) {
-        Serial2.print("!!ERROR{message=");
-        Serial2.print(err);
-        Serial2.println("}##");
+    if (!cmdlib::parse(line, parsedCmd, err)) {
+        Serial.print("!!ERROR{message=");
+        Serial.print(err);
+        Serial.println("}##");
+        return;
+    }
+    if (parsedCmd.command == "PING") {
+        PingPong.processCommand(parsedCmd);
         return;
     }
 
     if (parsedCmd.msgKind != "REQUEST") {
-        Serial2.println("!!ERROR{message=Invalid message kind}##");
+        Serial.println("!!ERROR{message=Invalid message kind}##");
         return;
     }
 
-    if (parsedCmd.command == "MAKE_STAR" && starIsMade == false) {
+    /**
+     * Should sending a star away reset the starIsMade flag?
+     */
+    if (parsedCmd.command == "MAKE_STAR") {
         starIsMade = true;
         micBrightness = parsedCmd.getNamed("brightness", "50").toInt();
+        /**
+         * Sends error message if brightness is out of range, but constrain already normalizes value even if its
+         * higher than 255. Either send error and constrain for safety, or just constrain without error
+         */
+        if (micBrightness < 0 || micBrightness > 255) {
+            Serial.print("!!ERROR{message=BRIGHTNESS_OUT_OF_RANGE (0-255), received=");
+            Serial.print(micBrightness);
+            Serial.println("}##");
+            return;
+        }
         micBrightness = constrain(micBrightness, 0, 255);
         fill_solid(micStar, NUM_MIC_STAR, CRGB(micBrightness, micBrightness, 0));
         FastLED.show();
         sendConfirm("MAKE_STAR");
-    } else if (parsedCmd.command == "UPDATE_STAR" && starIsMade == true) {
-        micBrightness = parsedCmd.getNamed("brightness", String(micBrightness)).toInt();
-        micBrightness = constrain(micBrightness, 0, 255);
-        fill_solid(micStar, NUM_MIC_STAR, CRGB(micBrightness, micBrightness, 0));
-        FastLED.show();
-        sendConfirm("UPDATE_STAR");
-    } else if (parsedCmd.command == "SEND_STAR") {
+    } else if (parsedCmd.command == "UPDATE_STAR") {
+        if (starIsMade == true) {
+            micBrightness = parsedCmd.getNamed("brightness", String(micBrightness)).toInt();
+            /**
+             * Same issue here with the constrain
+             */
+            if (micBrightness < 0 || micBrightness > 255) {
+                Serial.print("!!ERROR{message=BRIGHTNESS_OUT_OF_RANGE (0-255), received=");
+                Serial.print(micBrightness);
+                Serial.println("}##");
+                return;
+            }
+            micBrightness = constrain(micBrightness, 0, 255);
+            fill_solid(micStar, NUM_MIC_STAR, CRGB(micBrightness, micBrightness, 0));
+            FastLED.show();
+            sendConfirm("UPDATE_STAR");
+        } else {
+            Serial.print("!!ERROR{message=STAR_NOT_MADE_YET}##");
+            return;
+        }
+    }
+    /**
+     * Right now you can send star even if it wasn't made yet. This is intentional
+     */
+    else if (parsedCmd.command == "SEND_STAR") {
         starIsMade = false;
         // Direct confirm sturen
         sendConfirm("SEND_STAR");
@@ -139,9 +179,9 @@ void parseCommand(String line) {
         sendSpeed = parsedCmd.getNamed("speed", String(sendSpeed)).toInt();
 
         if (sendSpeed < 1 || sendSpeed > 10) {
-            Serial2.print("!!ERROR{message=SPEED_OUT_OF_RANGE (1-10), received=");
-            Serial2.print(sendSpeed);
-            Serial2.println("}##");
+            Serial.print("!!ERROR{message=SPEED_OUT_OF_RANGE (1-10), received=");
+            Serial.print(sendSpeed);
+            Serial.println("}##");
             return;
         }
 
@@ -188,9 +228,74 @@ void parseCommand(String line) {
         fill_solid(bottomArm, NUM_BOTTOM_ARM, CRGB::Black);
         FastLED.show();
     } else {
-        Serial2.print("!!ERROR{message=Unknown command: ");
-        Serial2.print(parsedCmd.command);
-        Serial2.println("}##");
+        Serial.print("!!ERROR{message=Unknown command: ");
+        Serial.print(parsedCmd.command);
+        Serial.println("}##");
+    }
+}
+
+// =============================================================
+// IDLE ANIMATIE
+// =============================================================
+
+void handleIdleAnimation() {
+    unsigned long now = millis();
+    if (now - lastIdleAnimationTimestamp > IDLE_ANIMATION_INTERVAL) {
+        starIsMade = false;
+        sendConfirm("SEND_STAR");
+        FastLED.show();
+
+        int randomStarBrightness = random(50, 256);
+        for (int b = 0; b < randomStarBrightness; b += 1) {
+            fill_solid(micStar, NUM_MIC_STAR, CRGB(b, b, 0));
+            FastLED.show();
+            delay(17);
+        }
+
+        for (int b = randomStarBrightness; b >= 0; b -= 1) {
+            fill_solid(micStar, NUM_MIC_STAR, CRGB(b, b, 0));
+            FastLED.show();
+            delay(17);
+        }
+        fill_solid(micStar, NUM_MIC_STAR, CRGB(0, 0, 0));
+
+        // ARM strips volledig dimmen
+        nscale8_video(sideArm, NUM_SIDE_ARM, 0);
+        nscale8_video(topArm, NUM_TOP_ARM, 0);
+        nscale8_video(bottomArm, NUM_BOTTOM_ARM, 0);
+        FastLED.show();
+        delay(20);
+
+        // Send star animatie
+        int delayPerStep = map(sendSpeed, 1, 10, 40, 5);
+        for (int i = NUM_SIDE_ARM - 1; i >= -sendSize; i--) {
+            fill_solid(sideArm, NUM_SIDE_ARM, CRGB::Black);
+            fill_solid(topArm, NUM_TOP_ARM, CRGB::Black);
+            fill_solid(bottomArm, NUM_BOTTOM_ARM, CRGB::Black);
+
+            for (int j = 0; j < sendSize; j++) {
+                int pos = i + j;
+                if (pos >= 0 && pos < NUM_SIDE_ARM) sideArm[pos] = sendColor;
+                if (pos >= 0 && pos < NUM_TOP_ARM) topArm[pos] = sendColor;
+                if (pos >= 0 && pos < NUM_BOTTOM_ARM) bottomArm[pos] = sendColor;
+            }
+
+            FastLED.show();
+            delay(delayPerStep);
+            yield();
+        }
+
+        // ARM strips resetten
+        fill_solid(sideArm, NUM_SIDE_ARM, CRGB::Black);
+        fill_solid(topArm, NUM_TOP_ARM, CRGB::Black);
+        fill_solid(bottomArm, NUM_BOTTOM_ARM, CRGB::Black);
+        FastLED.show();
+
+        lastIdleAnimationTimestamp = now;
+
+        Serial.print("Animation took:");
+        Serial.print(millis() - now);
+        Serial.println("ms");
     }
 }
 
@@ -200,8 +305,8 @@ void parseCommand(String line) {
 void sendConfirm(const char* cmdName) {
     cmdlib::Command confirm;
     confirm.msgKind = "MASTER:CONFIRM";
-    confirm.command = String(cmdName).c_str();
-    Serial2.println(confirm.toString());
+    confirm.command = String(cmdName);
+    Serial.println(confirm.toString());
 }
 
 // =============================================================
