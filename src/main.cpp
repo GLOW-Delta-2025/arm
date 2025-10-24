@@ -56,7 +56,7 @@ bool starIsMade = false;
 
 unsigned long lastIdleAnimationTimestamp = 0;
 
-HardwareSerial* MySerial = &Serial;  // Change to prefered Serial port
+HardwareSerial* MySerial = &Serial2;  // Change to prefered Serial port
 
 // =============================================================
 // SETUP
@@ -75,7 +75,7 @@ void setup() {
     FastLED.clear();
     FastLED.show();
 
-    PingPong.init(PING_PONG_TIMEOUT_MS, &Serial);
+    PingPong.init(PING_PONG_TIMEOUT_MS, MySerial);
     MySerial->println("ESP Ready: ARM + MIC STAR (FastLED + CmdLib active)");
 }
 
@@ -87,7 +87,11 @@ void loop() {
     readSerial();
 
     if (PING_IDLE) {  // optional reaction if idle
-        MySerial->println("!!ERROR{message=CONNECTION_IDLE}##");
+        cmdlib::Command errResp;
+        errResp.addHeader("MASTER");
+        errResp.msgKind = "ERROR";
+        errResp.command = "PING_IDLE";
+        MySerial->println(errResp.toString());
         handleIdleAnimation();
     }
 }
@@ -112,9 +116,12 @@ void parseCommand(String line) {
     cmdlib::Command parsedCmd;
 
     if (!cmdlib::parse(line, parsedCmd, err)) {
-        MySerial->print("!!ERROR{message=");
-        MySerial->print(err);
-        MySerial->println("}##");
+        cmdlib::Command errResp;
+        errResp.addHeader("MASTER");
+        errResp.msgKind = "ERROR";
+        errResp.command = parsedCmd.command;
+        errResp.setNamed("message", err);
+        MySerial->println(errResp.toString());
         return;
     }
     if (parsedCmd.command == "PING") {
@@ -123,7 +130,12 @@ void parseCommand(String line) {
     }
 
     if (parsedCmd.msgKind != "REQUEST") {
-        MySerial->println("!!ERROR{message=Invalid message kind}##");
+        cmdlib::Command errResp;
+        errResp.addHeader("MASTER");
+        errResp.msgKind = "ERROR";
+        errResp.command = parsedCmd.command;
+        errResp.setNamed("message", "Invalid message kind");
+        MySerial->println(errResp.toString());
         return;
     }
 
@@ -138,9 +150,12 @@ void parseCommand(String line) {
          * higher than 255. Either send error and constrain for safety, or just constrain without error
          */
         if (micBrightness < 0 || micBrightness > 255) {
-            MySerial->print("!!ERROR{message=BRIGHTNESS_OUT_OF_RANGE (0-255), received=");
-            MySerial->print(micBrightness);
-            MySerial->println("}##");
+            cmdlib::Command errResp;
+            errResp.addHeader("MASTER");
+            errResp.msgKind = "ERROR";
+            errResp.command = parsedCmd.command;
+            errResp.setNamed("message", "BRIGHTNESS_OUT_OF_RANGE (0-255), received=" + micBrightness);
+            MySerial->println(errResp.toString());
             return;
         }
         micBrightness = constrain(micBrightness, 0, 255);
@@ -154,9 +169,12 @@ void parseCommand(String line) {
              * Same issue here with the constrain
              */
             if (micBrightness < 0 || micBrightness > 255) {
-                MySerial->print("!!ERROR{message=BRIGHTNESS_OUT_OF_RANGE (0-255), received=");
-                MySerial->print(micBrightness);
-                MySerial->println("}##");
+                cmdlib::Command errResp;
+                errResp.addHeader("MASTER");
+                errResp.msgKind = "ERROR";
+                errResp.command = parsedCmd.command;
+                errResp.setNamed("message", "BRIGHTNESS_OUT_OF_RANGE (0-255), received=" + micBrightness);
+                MySerial->println(errResp.toString());
                 return;
             }
             micBrightness = constrain(micBrightness, 0, 255);
@@ -164,7 +182,12 @@ void parseCommand(String line) {
             FastLED.show();
             sendConfirm("UPDATE_STAR");
         } else {
-            MySerial->print("!!ERROR{message=STAR_NOT_MADE_YET}##");
+            cmdlib::Command errResp;
+            errResp.addHeader("MASTER");
+            errResp.msgKind = "ERROR";
+            errResp.command = parsedCmd.command;
+            errResp.setNamed("message", "STAR_NOT_MADE_YET");
+            MySerial->println(errResp.toString());
             return;
         }
     } else if (parsedCmd.command == "SEND_STAR") {
@@ -178,9 +201,12 @@ void parseCommand(String line) {
         sendSpeed = parsedCmd.getNamed("speed", String(sendSpeed)).toInt();
 
         if (sendSpeed < 1 || sendSpeed > 10) {
-            MySerial->print("!!ERROR{message=SPEED_OUT_OF_RANGE (1-10), received=");
-            MySerial->print(sendSpeed);
-            MySerial->println("}##");
+            cmdlib::Command errResp;
+            errResp.addHeader("MASTER");
+            errResp.msgKind = "ERROR";
+            errResp.command = parsedCmd.command;
+            errResp.setNamed("message", "SPEED_OUT_OF_RANGE (1-10), received=" + sendSpeed);
+            MySerial->println(errResp.toString());
             return;
         }
 
@@ -229,9 +255,12 @@ void parseCommand(String line) {
 
         sendRequest("STAR_ARRIVED");
     } else {
-        MySerial->print("!!ERROR{message=Unknown command: ");
-        MySerial->print(parsedCmd.command);
-        MySerial->println("}##");
+        cmdlib::Command errResp;
+        errResp.addHeader("MASTER");
+        errResp.msgKind = "ERROR";
+        errResp.command = parsedCmd.command;
+        errResp.setNamed("message", "Unknown command: " + parsedCmd.command);
+        MySerial->println(errResp.toString());
     }
 }
 
