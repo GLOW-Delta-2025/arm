@@ -49,7 +49,6 @@ int sendSpeed = 3;
 CRGB sendColor = CRGB::Yellow;
 
 String serialLine;
-PingPongHandler PingPong;
 
 bool starIsMade = false;
 
