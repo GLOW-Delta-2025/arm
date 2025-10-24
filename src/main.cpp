@@ -51,7 +51,6 @@ CRGB sendColor = CRGB::Yellow;
 String serialLine;
 PingPongHandler PingPong;
 
-bool PING_IDLE = false;
 bool starIsMade = false;
 
 unsigned long lastIdleAnimationTimestamp = 0;
@@ -145,10 +144,6 @@ void parseCommand(String line) {
     if (parsedCmd.command == "MAKE_STAR") {
         starIsMade = true;
         micBrightness = parsedCmd.getNamed("brightness", "50").toInt();
-        /**
-         * Sends error message if brightness is out of range, but constrain already normalizes value even if its
-         * higher than 255. Either send error and constrain for safety, or just constrain without error
-         */
         if (micBrightness < 0 || micBrightness > 255) {
             cmdlib::Command errResp;
             errResp.addHeader("MASTER");
@@ -158,16 +153,13 @@ void parseCommand(String line) {
             MySerial->println(errResp.toString());
             return;
         }
+        sendConfirm("MAKE_STAR");
         micBrightness = constrain(micBrightness, 0, 255);
         fill_solid(micStar, NUM_MIC_STAR, CRGB(micBrightness, micBrightness, 0));
         FastLED.show();
-        sendConfirm("MAKE_STAR");
     } else if (parsedCmd.command == "UPDATE_STAR") {
         if (starIsMade == true) {
             micBrightness = parsedCmd.getNamed("brightness", String(micBrightness)).toInt();
-            /**
-             * Same issue here with the constrain
-             */
             if (micBrightness < 0 || micBrightness > 255) {
                 cmdlib::Command errResp;
                 errResp.addHeader("MASTER");
@@ -177,10 +169,11 @@ void parseCommand(String line) {
                 MySerial->println(errResp.toString());
                 return;
             }
+            sendConfirm("UPDATE_STAR");
             micBrightness = constrain(micBrightness, 0, 255);
             fill_solid(micStar, NUM_MIC_STAR, CRGB(micBrightness, micBrightness, 0));
             FastLED.show();
-            sendConfirm("UPDATE_STAR");
+
         } else {
             cmdlib::Command errResp;
             errResp.addHeader("MASTER");
