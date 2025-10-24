@@ -31,6 +31,7 @@ CRGB sideArm[NUM_SIDE_ARM];
 CRGB topArm[NUM_TOP_ARM];
 CRGB bottomArm[NUM_BOTTOM_ARM];
 CRGB micStar[NUM_MIC_STAR];
+CRGB idleColor = CRGB::Yellow;
 
 #define RX_PIN 16
 #define TX_PIN 17
@@ -55,19 +56,20 @@ bool starIsMade = false;
 
 unsigned long lastIdleAnimationTimestamp = 0;
 
-HardwareSerial* MySerial = &Serial2;  // Change to prefered Serial port
+HardwareSerial* MySerial = &Serial;  // Change to prefered Serial port
 
 // =============================================================
 // SETUP
 // =============================================================
 void setup() {
-    MySerial->begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
+    // MySerial->begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
+    MySerial->begin(9600);
 
     delay(1000);
 
-    FastLED.addLeds<WS2811, PIN_SIDE_ARM, RGB>(sideArm, NUM_SIDE_ARM);
-    FastLED.addLeds<WS2811, PIN_TOP_ARM, RGB>(topArm, NUM_TOP_ARM);
-    FastLED.addLeds<WS2811, PIN_BOTTOM_ARM, RGB>(bottomArm, NUM_BOTTOM_ARM);
+    FastLED.addLeds<WS2811, PIN_SIDE_ARM, BGR>(sideArm, NUM_SIDE_ARM);
+    FastLED.addLeds<WS2811, PIN_TOP_ARM, BGR>(topArm, NUM_TOP_ARM);
+    FastLED.addLeds<WS2811, PIN_BOTTOM_ARM, BGR>(bottomArm, NUM_BOTTOM_ARM);
     FastLED.addLeds<WS2811, PIN_MIC_STAR, BGR>(micStar, NUM_MIC_STAR);
 
     FastLED.clear();
@@ -273,9 +275,9 @@ void handleIdleAnimation() {
 
             for (int j = 0; j < sendSize; j++) {
                 int pos = i + j;
-                if (pos >= 0 && pos < NUM_SIDE_ARM) sideArm[pos] = sendColor;
-                if (pos >= 0 && pos < NUM_TOP_ARM) topArm[pos] = sendColor;
-                if (pos >= 0 && pos < NUM_BOTTOM_ARM) bottomArm[pos] = sendColor;
+                if (pos >= 0 && pos < NUM_SIDE_ARM) sideArm[pos] = idleColor;
+                if (pos >= 0 && pos < NUM_TOP_ARM) topArm[pos] = idleColor;
+                if (pos >= 0 && pos < NUM_BOTTOM_ARM) bottomArm[pos] = idleColor;
             }
 
             FastLED.show();
@@ -315,10 +317,10 @@ void sendRequest(const char* cmdName) {
 // =============================================================
 CRGB parseColor(String c, int val) {
     c.toLowerCase();
-    if (c == "blue") return CRGB(val, 0, 0);
-    if (c == "red") return CRGB(0, val, 0);
-    if (c == "green") return CRGB(0, 0, val);
+    if (c == "blue") return CRGB(0, 0, val);   // B
+    if (c == "green") return CRGB(val, 0, 0);  // G
+    if (c == "red") return CRGB(0, val, 0);    // R
     if (c == "white") return CRGB(val, val, val);
-    if (c == "yellow") return CRGB(0, val, val);
-    return CRGB(0, val, val);  // fallback geel
+    if (c == "yellow") return CRGB(val, val, 0);
+    return CRGB(val, val, 0);  // fallback yellow
 }
