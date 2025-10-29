@@ -31,14 +31,18 @@ CRGB sideArm[NUM_SIDE_ARM];
 CRGB topArm[NUM_TOP_ARM];
 CRGB bottomArm[NUM_BOTTOM_ARM];
 CRGB micStar[NUM_MIC_STAR];
-CRGB idleColor = CRGB::Yellow;
+
+uint8_t STAR_R = 255;
+uint8_t STAR_G = 191;
+uint8_t STAR_B = 3;
+
+CRGB idleColor = CRGB(STAR_R, STAR_G, STAR_B);
 
 #define RX_PIN 16
 #define TX_PIN 17
 
 #define IDLE_ANIMATION_INTERVAL 10000  // 10 seconds for testing, can be adjusted
 #define PING_PONG_TIMEOUT_MS 45000
-
 // =============================================================
 // VARIABELEN
 // =============================================================
@@ -46,7 +50,7 @@ int micBrightness = 0;
 int sendBrightness = 0;
 int sendSize = 8;
 int sendSpeed = 3;
-CRGB sendColor = CRGB::Yellow;
+CRGB sendColor = CRGB(STAR_R, STAR_G, STAR_B);
 
 String serialLine;
 
@@ -65,10 +69,10 @@ void setup() {
 
     delay(1000);
 
-    FastLED.addLeds<WS2811, PIN_SIDE_ARM, BGR>(sideArm, NUM_SIDE_ARM);
-    FastLED.addLeds<WS2811, PIN_TOP_ARM, BGR>(topArm, NUM_TOP_ARM);
-    FastLED.addLeds<WS2811, PIN_BOTTOM_ARM, BGR>(bottomArm, NUM_BOTTOM_ARM);
-    FastLED.addLeds<WS2811, PIN_MIC_STAR, BGR>(micStar, NUM_MIC_STAR);
+    FastLED.addLeds<WS2811, PIN_SIDE_ARM, BRG>(sideArm, NUM_SIDE_ARM);
+    FastLED.addLeds<WS2811, PIN_TOP_ARM, BRG>(topArm, NUM_TOP_ARM);
+    FastLED.addLeds<WS2811, PIN_BOTTOM_ARM, BRG>(bottomArm, NUM_BOTTOM_ARM);
+    FastLED.addLeds<WS2811, PIN_MIC_STAR, BRG>(micStar, NUM_MIC_STAR);
 
     FastLED.clear();
     FastLED.show();
@@ -342,6 +346,6 @@ CRGB parseColor(String c, int val) {
     if (c == "green") return CRGB(val, 0, 0);  // G
     if (c == "red") return CRGB(0, val, 0);    // R
     if (c == "white") return CRGB(val, val, val);
-    if (c == "yellow") return CRGB(val, val, 0);
+    if (c == "yellow") CRGB(STAR_R, STAR_G, STAR_B);
     return CRGB(val, val, 0);  // fallback yellow
 }
