@@ -13,6 +13,7 @@ CRGB parseColor(String c, int val);
 void readSerial(void);
 void parseCommand(String line);
 void handleIdleAnimation(void);
+void updateAnimation(void);
 
 // =============================================================
 // PIN CONFIGURATIE & LED-STRIPS
@@ -60,12 +61,43 @@ unsigned long lastIdleAnimationTimestamp = 0;
 
 HardwareSerial* MySerial = &Serial2;  // Change to prefered Serial port
 
+// Animation state machine
+enum AnimState {
+  ANIM_IDLE,
+  FADE_MIC,
+  DELAY_AFTER_FADE,
+  ANIM_ARM
+};
+AnimState currentState = ANIM_IDLE;
+
+unsigned long lastAnimUpdate = 0;
+int currentDelay = 0;
+
+int fadeCurrent = 0;
+int fadeTarget = 0;
+int fadeStep = 0;
+int fadeInterval = 0;
+
+enum NextFadeAction {
+  NO_NEXT,
+  FADE_TO_DOWN,
+  FADE_TO_DELAY
+};
+NextFadeAction nextFadeAction = NO_NEXT;
+
+int armPos = 0;
+int armEndPos = 0;
+int armSize = 0;
+int armInterval = 0;
+CRGB armColor;
+bool sendArrivedNeeded = false;
+
 // =============================================================
 // SETUP
 // =============================================================
 void setup() {
     // MySerial->begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
-    MySerial->begin(9600);
+    MySerial->begin(115200);
 
     delay(1000);
 
@@ -87,6 +119,7 @@ void setup() {
 void loop() {
     PingPong.update();  // handle PING/PONG idle detection
     readSerial();
+    updateAnimation();
 
     if (PING_IDLE) {  // optional reaction if idle
         cmdlib::Command errResp;
@@ -146,7 +179,7 @@ void parseCommand(String line) {
      */
     if (parsedCmd.command == "MAKE_STAR") {
         starIsMade = true;
-        micBrightness = parsedCmd.getNamed("brightness", "50").toInt();
+        micBrightness = parsedCmd.getNamed("BRIGHTNESS", "50").toInt();
         if (micBrightness < 0 || micBrightness > 255) {
             cmdlib::Command errResp;
             errResp.addHeader("MASTER");
@@ -157,12 +190,12 @@ void parseCommand(String line) {
             return;
         }
         sendConfirm("MAKE_STAR");
-        micBrightness = constrain(micBrightness, 0, 255);
-        fill_solid(micStar, NUM_MIC_STAR, CRGB(micBrightness, micBrightness, 0));
+        FastLED.setBrightness(micBrightness);
+        fill_solid(micStar, NUM_MIC_STAR, idleColor);
         FastLED.show();
     } else if (parsedCmd.command == "UPDATE_STAR") {
         if (starIsMade == true) {
-            micBrightness = parsedCmd.getNamed("brightness", String(micBrightness)).toInt();
+            micBrightness = parsedCmd.getNamed("BRIGHTNESS", String(micBrightness)).toInt();
             if (micBrightness < 0 || micBrightness > 255) {
                 cmdlib::Command errResp;
                 errResp.addHeader("MASTER");
@@ -173,8 +206,8 @@ void parseCommand(String line) {
                 return;
             }
             sendConfirm("UPDATE_STAR");
-            micBrightness = constrain(micBrightness, 0, 255);
-            fill_solid(micStar, NUM_MIC_STAR, CRGB(micBrightness, micBrightness, 0));
+            FastLED.setBrightness(micBrightness);
+            fill_solid(micStar, NUM_MIC_STAR, idleColor);
             FastLED.show();
 
         } else {
@@ -191,10 +224,10 @@ void parseCommand(String line) {
         // Direct confirm sturen
         sendConfirm("SEND_STAR");
 
-        sendBrightness = parsedCmd.getNamed("brightness", String(sendBrightness)).toInt();
+        sendBrightness = parsedCmd.getNamed("BRIGHTNESS", String(sendBrightness)).toInt();
         sendBrightness = constrain(sendBrightness, 0, 255);
-        sendSize = parsedCmd.getNamed("size", String(sendSize)).toInt();
-        sendSpeed = parsedCmd.getNamed("speed", String(sendSpeed)).toInt();
+        sendSize = parsedCmd.getNamed("SIZE", String(sendSize)).toInt();
+        sendSpeed = parsedCmd.getNamed("SPEED", String(sendSpeed)).toInt();
 
         if (sendSpeed < 1 || sendSpeed > 10) {
             cmdlib::Command errResp;
@@ -206,50 +239,27 @@ void parseCommand(String line) {
             return;
         }
 
-        String colorStr = parsedCmd.getNamed("color", "yellow");
+        String colorStr = parsedCmd.getNamed("COLOR", "yellow");
         sendColor = parseColor(colorStr, sendBrightness);
 
-        // Mic dimmen
-        for (int b = micBrightness; b >= 0; b--) {
-            fill_solid(micStar, NUM_MIC_STAR, CRGB(b, b, 0));
-            FastLED.show();
-            delay(5);
-        }
-        micBrightness = 0;
+        // Start non-blocking animation
+        fadeCurrent = micBrightness;
+        fadeTarget = 0;
+        fadeStep = -1;
+        fadeInterval = 5;
+        nextFadeAction = FADE_TO_DELAY;
+        armColor = sendColor;
+        armSize = sendSize;
+        armInterval = map(sendSpeed, 1, 10, 40, 5);
+        sendArrivedNeeded = true;
 
-        // ARM strips volledig dimmen
-        nscale8_video(sideArm, NUM_SIDE_ARM, 0);
-        nscale8_video(topArm, NUM_TOP_ARM, 0);
-        nscale8_video(bottomArm, NUM_BOTTOM_ARM, 0);
+        // Perform first fade step immediately
+        fill_solid(micStar, NUM_MIC_STAR, CRGB(fadeCurrent, fadeCurrent, 0));
         FastLED.show();
-        delay(20);
-
-        // Send star animatie
-        int delayPerStep = map(sendSpeed, 1, 10, 40, 5);
-        for (int i = NUM_SIDE_ARM - 1; i >= -sendSize; i--) {
-            fill_solid(sideArm, NUM_SIDE_ARM, CRGB::Black);
-            fill_solid(topArm, NUM_TOP_ARM, CRGB::Black);
-            fill_solid(bottomArm, NUM_BOTTOM_ARM, CRGB::Black);
-
-            for (int j = 0; j < sendSize; j++) {
-                int pos = i + j;
-                if (pos >= 0 && pos < NUM_SIDE_ARM) sideArm[pos] = sendColor;
-                if (pos >= 0 && pos < NUM_TOP_ARM) topArm[pos] = sendColor;
-                if (pos >= 0 && pos < NUM_BOTTOM_ARM) bottomArm[pos] = sendColor;
-            }
-
-            FastLED.show();
-            delay(delayPerStep);
-            yield();
-        }
-
-        // ARM strips resetten
-        fill_solid(sideArm, NUM_SIDE_ARM, CRGB::Black);
-        fill_solid(topArm, NUM_TOP_ARM, CRGB::Black);
-        fill_solid(bottomArm, NUM_BOTTOM_ARM, CRGB::Black);
-        FastLED.show();
-
-        sendRequest("STAR_ARRIVED");
+        fadeCurrent += fadeStep;
+        currentDelay = fadeInterval;
+        lastAnimUpdate = millis();
+        currentState = FADE_MIC;
     } else {
         cmdlib::Command errResp;
         errResp.addHeader("MASTER");
@@ -266,57 +276,127 @@ void parseCommand(String line) {
 
 void handleIdleAnimation() {
     unsigned long now = millis();
-    if (now - lastIdleAnimationTimestamp > IDLE_ANIMATION_INTERVAL) {
+    if (now - lastIdleAnimationTimestamp > IDLE_ANIMATION_INTERVAL && currentState == ANIM_IDLE) {
         starIsMade = false;
-        FastLED.show();
 
         int randomStarBrightness = random(50, 256);
-        for (int b = 0; b < randomStarBrightness; b += 1) {
-            fill_solid(micStar, NUM_MIC_STAR, CRGB(b, b, 0));
-            FastLED.show();
-            delay(17);
-        }
+        fadeCurrent = 0;
+        fadeTarget = randomStarBrightness;
+        fadeStep = 1;
+        fadeInterval = 17;
+        nextFadeAction = FADE_TO_DOWN;
+        armColor = idleColor;
+        armSize = sendSize;
+        armInterval = map(sendSpeed, 1, 10, 40, 5);
+        sendArrivedNeeded = false;
 
-        for (int b = randomStarBrightness; b >= 0; b -= 1) {
-            fill_solid(micStar, NUM_MIC_STAR, CRGB(b, b, 0));
-            FastLED.show();
-            delay(17);
-        }
-        fill_solid(micStar, NUM_MIC_STAR, CRGB(0, 0, 0));
-
-        // ARM strips volledig dimmen
-        nscale8_video(sideArm, NUM_SIDE_ARM, 0);
-        nscale8_video(topArm, NUM_TOP_ARM, 0);
-        nscale8_video(bottomArm, NUM_BOTTOM_ARM, 0);
+        // Perform first fade step immediately
+        fill_solid(micStar, NUM_MIC_STAR, CRGB(fadeCurrent, fadeCurrent, 0));
         FastLED.show();
-        delay(20);
+        fadeCurrent += fadeStep;
+        currentDelay = fadeInterval;
+        lastAnimUpdate = millis();
+        currentState = FADE_MIC;
 
-        // Send star animatie
-        int delayPerStep = map(sendSpeed, 1, 10, 40, 5);
-        for (int i = NUM_SIDE_ARM - 1; i >= -sendSize; i--) {
+        lastIdleAnimationTimestamp = now;
+    }
+}
+
+void updateAnimation() {
+    if (currentState == ANIM_IDLE) return;
+    if (millis() - lastAnimUpdate < (unsigned long)currentDelay) return;
+
+    lastAnimUpdate = millis();
+
+    switch (currentState) {
+        case FADE_MIC: {
+            fill_solid(micStar, NUM_MIC_STAR, CRGB(fadeCurrent, fadeCurrent, 0));
+            FastLED.show();
+            fadeCurrent += fadeStep;
+            bool done = (fadeStep > 0 && fadeCurrent > fadeTarget) || (fadeStep < 0 && fadeCurrent < fadeTarget);
+            if (done) {
+                fadeCurrent = fadeTarget;
+                if (nextFadeAction == FADE_TO_DOWN) {
+                    fadeTarget = 0;
+                    fadeStep = -1;
+                    fadeInterval = 17;
+                    nextFadeAction = FADE_TO_DELAY;
+                } else if (nextFadeAction == FADE_TO_DELAY) {
+                    nscale8_video(sideArm, NUM_SIDE_ARM, 0);
+                    nscale8_video(topArm, NUM_TOP_ARM, 0);
+                    nscale8_video(bottomArm, NUM_BOTTOM_ARM, 0);
+                    FastLED.show();
+                    micBrightness = 0;
+                    currentDelay = 20;
+                    currentState = DELAY_AFTER_FADE;
+                }
+            } else {
+                currentDelay = fadeInterval;
+            }
+            break;
+        }
+        case DELAY_AFTER_FADE: {
+            armPos = NUM_SIDE_ARM - 1;
+            armEndPos = -armSize;
+            // Perform first arm step immediately
             fill_solid(sideArm, NUM_SIDE_ARM, CRGB::Black);
             fill_solid(topArm, NUM_TOP_ARM, CRGB::Black);
             fill_solid(bottomArm, NUM_BOTTOM_ARM, CRGB::Black);
 
-            for (int j = 0; j < sendSize; j++) {
-                int pos = i + j;
-                if (pos >= 0 && pos < NUM_SIDE_ARM) sideArm[pos] = idleColor;
-                if (pos >= 0 && pos < NUM_TOP_ARM) topArm[pos] = idleColor;
-                if (pos >= 0 && pos < NUM_BOTTOM_ARM) bottomArm[pos] = idleColor;
+            for (int j = 0; j < armSize; j++) {
+                int pos = armPos + j;
+                if (pos >= 0 && pos < NUM_SIDE_ARM) sideArm[pos] = armColor;
+                if (pos >= 0 && pos < NUM_TOP_ARM) topArm[pos] = armColor;
+                if (pos >= 0 && pos < NUM_BOTTOM_ARM) bottomArm[pos] = armColor;
             }
 
             FastLED.show();
-            delay(delayPerStep);
-            yield();
+            armPos--;
+            if (armPos < armEndPos) {
+                fill_solid(sideArm, NUM_SIDE_ARM, CRGB::Black);
+                fill_solid(topArm, NUM_TOP_ARM, CRGB::Black);
+                fill_solid(bottomArm, NUM_BOTTOM_ARM, CRGB::Black);
+                FastLED.show();
+                if (sendArrivedNeeded) {
+                    sendRequest("STAR_ARRIVED");
+                }
+                currentState = ANIM_IDLE;
+            } else {
+                currentState = ANIM_ARM;
+                currentDelay = armInterval;
+            }
+            break;
         }
+        case ANIM_ARM: {
+            fill_solid(sideArm, NUM_SIDE_ARM, CRGB::Black);
+            fill_solid(topArm, NUM_TOP_ARM, CRGB::Black);
+            fill_solid(bottomArm, NUM_BOTTOM_ARM, CRGB::Black);
 
-        // ARM strips resetten
-        fill_solid(sideArm, NUM_SIDE_ARM, CRGB::Black);
-        fill_solid(topArm, NUM_TOP_ARM, CRGB::Black);
-        fill_solid(bottomArm, NUM_BOTTOM_ARM, CRGB::Black);
-        FastLED.show();
+            for (int j = 0; j < armSize; j++) {
+                int pos = armPos + j;
+                if (pos >= 0 && pos < NUM_SIDE_ARM) sideArm[pos] = armColor;
+                if (pos >= 0 && pos < NUM_TOP_ARM) topArm[pos] = armColor;
+                if (pos >= 0 && pos < NUM_BOTTOM_ARM) bottomArm[pos] = armColor;
+            }
 
-        lastIdleAnimationTimestamp = now;
+            FastLED.show();
+            armPos--;
+            if (armPos < armEndPos) {
+                fill_solid(sideArm, NUM_SIDE_ARM, CRGB::Black);
+                fill_solid(topArm, NUM_TOP_ARM, CRGB::Black);
+                fill_solid(bottomArm, NUM_BOTTOM_ARM, CRGB::Black);
+                FastLED.show();
+                if (sendArrivedNeeded) {
+                    sendRequest("STAR_ARRIVED");
+                }
+                currentState = ANIM_IDLE;
+            } else {
+                currentDelay = armInterval;
+            }
+            break;
+        }
+        default:
+            break;
     }
 }
 
